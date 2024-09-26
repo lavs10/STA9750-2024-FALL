@@ -1,0 +1,180 @@
+---
+title: "Mini Project #01: Fiscal Characteristics of Major US Public Transit Systems"
+author: "Lavanya"
+date: "2024-09-20"
+execute:
+  echo: false   # Hide the code in the final document
+  eval: true    # Evaluate code chunks
+  freeze: auto  # Ensure results are frozen when running
+output:
+  html_document:
+    theme: flatly
+---
+
+Introduction
+In this mini-project, I analyze the fiscal characteristics of major US public transit systems, focusing on farebox recovery, unlinked passenger trips (UPT), and vehicle revenue miles (VRM) for 2022. The data is sourced from the National Transit Database and includes various transit agencies and modes of transportation.
+
+Methodology
+The analysis is based on data from:
+
+1) 2022 Fare Revenue report
+2) Operating Expenses report
+3) Monthly Ridership data for 2022
+
+Data Cleaning and Merging
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(readxl)
+library(lubridate)
+
+# Fare revenue data
+FARES <- read_xlsx("2022_fare_revenue.xlsx") %>%
+  select(-`State/Parent NTD ID`, -`Reporter Type`, -`Reporting Module`, -`TOS`, 
+         -`Passenger Paid Fares`, -`Organization Paid Fares`) %>%
+  filter(`Expense Type` == "Funds Earned During Period") %>%
+  select(-`Expense Type`) %>%
+  group_by(`NTD ID`, `Agency Name`, `Mode`) %>%
+  summarize(`Total Fares` = sum(`Total Fares`), .groups = 'drop')
+
+# Operating expenses data
+EXPENSES <- readr::read_csv("2022_expenses.csv") %>%
+  select(`NTD ID`, `Agency`, `Total`, `Mode`) %>%
+  mutate(`NTD ID` = as.integer(`NTD ID`)) %>%
+  rename(Expenses = Total) %>%
+  group_by(`NTD ID`, `Mode`) %>%
+  summarize(Expenses = sum(Expenses), .groups = 'drop')
+
+# Merge fare revenue and expenses data
+FINANCIALS <- inner_join(FARES, EXPENSES, by = c("NTD ID", "Mode"))
+
+# Load ridership data (UPT and VRM)
+TRIPS <- read_xlsx("ridership.xlsx", sheet = "UPT") %>%
+  filter(`Mode/Type of Service Status` == "Active") %>%
+  select(-`Legacy NTD ID`, -`Reporter Type`, -`Mode/Type of Service Status`, -`UACE CD`, -`TOS`) %>%
+  pivot_longer(-c(`NTD ID`, `Agency`, `UZA Name`, `Mode`, `3 Mode`), 
+               names_to = "month", 
+               values_to = "UPT") %>%
+  drop_na() %>%
+  mutate(month = lubridate::my(month))
+
+MILES <- read_xlsx("ridership.xlsx", sheet = "VRM") %>%
+  filter(`Mode/Type of Service Status` == "Active") %>%
+  select(-`Legacy NTD ID`, -`Reporter Type`, -`Mode/Type of Service Status`, -`UACE CD`, -`TOS`) %>%
+  pivot_longer(-c(`NTD ID`, `Agency`, `UZA Name`, `Mode`, `3 Mode`), 
+               names_to = "month", 
+               values_to = "VRM") %>%
+  drop_na() %>%
+  mutate(month = lubridate::my(month))
+
+# Combine ridership data (UPT and VRM)
+USAGE <- inner_join(TRIPS, MILES, by = c("NTD ID", "Agency", "UZA Name", "Mode", "month"))
+
+# Ensure NTD ID is of the same type (character) in both data frames
+USAGE <- USAGE %>%
+  mutate(`NTD ID` = as.character(`NTD ID`))
+
+FINANCIALS <- FINANCIALS %>%
+  mutate(`NTD ID` = as.character(`NTD ID`))
+
+# Combine usage data with financials
+USAGE_AND_FINANCIALS <- left_join(USAGE, FINANCIALS, by = c("NTD ID", "Mode"))
+```
+
+Table Summarization
+
+```{r}
+# Filter the data for the year 2022 and summarize UPT and VRM
+USAGE_2022_ANNUAL <- USAGE %>%
+  filter(year(month) == 2022) %>%
+  group_by(`NTD ID`, `Agency`, `UZA Name`, `Mode`) %>%
+  summarize(
+    Total_UPT = sum(UPT, na.rm = TRUE),
+    Total_VRM = sum(VRM, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  rename(metro_area = `UZA Name`)  # Rename 'UZA Name' to 'metro_area'
+
+# View the first few rows of the summarized data
+head(USAGE_2022_ANNUAL)
+```
+
+Analysis
+
+1. Which Transit System Had the Most UPT in 2022?
+The transit system with the most Unlinked Passenger Trips (UPT) is:
+```{r}
+# Calculate the system with the most UPT in 2022
+most_upt <- USAGE_2022_ANNUAL %>%
+  group_by(`NTD ID`, `Agency`, `Mode`) %>%
+  summarize(Total_UPT = sum(Total_UPT, na.rm = TRUE), .groups = 'drop') %>%
+  arrange(desc(Total_UPT)) %>%
+  slice(1)
+
+most_upt
+```
+
+2. Which Transit System Had the Highest Farebox Recovery?
+```{r}
+# Calculate the system with the highest farebox recovery
+highest_farebox <- USAGE_AND_FINANCIALS %>%
+  mutate(Farebox_Recovery = `Total Fares` / Expenses) %>%
+  arrange(desc(Farebox_Recovery)) %>%
+  slice(1)
+
+highest_farebox
+```
+3. Which Transit System Has the Lowest Expenses per UPT?
+```{r}
+# Calculate the system with the lowest expenses per UPT
+lowest_exp_per_upt <- USAGE_AND_FINANCIALS %>%
+  mutate(Expenses_per_UPT = Expenses / UPT) %>%
+  arrange(Expenses_per_UPT) %>%
+  slice(1)
+
+lowest_exp_per_upt
+```
+4. Which Transit System Has the Highest Fares per UPT?
+```{r}
+# Calculate the system with the highest total fares per UPT
+highest_fares_per_upt <- USAGE_AND_FINANCIALS %>%
+  mutate(Fares_per_UPT = `Total Fares` / UPT) %>%
+  arrange(desc(Fares_per_UPT)) %>%
+  slice(1)
+
+highest_fares_per_upt
+```
+5. Which Transit System Has the Lowest Expenses per VRM?
+```{r}
+# Calculate the system with the lowest expenses per VRM
+lowest_exp_per_vrm <- USAGE_AND_FINANCIALS %>%
+  mutate(Expenses_per_VRM = Expenses / VRM) %>%
+  arrange(Expenses_per_VRM) %>%
+  slice(1)
+
+lowest_exp_per_vrm
+```
+6. Which Transit System Has the Highest Total Fares per VRM?
+```{r}
+# Calculate the system with the highest total fares per VRM
+highest_fares_per_vrm <- USAGE_AND_FINANCIALS %>%
+  mutate(Fares_per_VRM = `Total Fares` / VRM) %>%
+  arrange(desc(Fares_per_VRM)) %>%
+  slice(1)
+
+highest_fares_per_vrm
+```
+Conclusion
+Based on the analysis, I believe, the most efficient transit system varies depending on which factor of efficiency is prioritized:
+
+Farebox recovery: Butler County Regional Transit Authority (Commuter Bus) demonstrates the highest farebox recovery, meaning it operates with a high degree of financial self-sustainability.
+Operational Scale: MTA New York City Transit (Heavy Rail) handles the most UPT and VRM, making it highly efficient in serving a large population.
+
+
+
+
+
+
+
+
